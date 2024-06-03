@@ -4,6 +4,8 @@
     "flat_fee": 9.99,
     "filter_pe_ratio": true,
     "pe_ratio_threshold": 25,
-    "output_filename": "top_stocks_ytd.xlsx",
-    "performance_period": "ytd"
+    "output_filename": "top_stocks_ytd3.xlsx",
+    "performance_period": "ytd",
+    "top_n_sectors": 4,
+    "banned_sectors": ["Energy"]
   }

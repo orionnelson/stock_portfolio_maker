@@ -36,7 +36,7 @@ def get_sector_performance(sector_dict, period):
     
     return pd.Series(sector_performance, name="Performance")
 
-def analyze_fundamentals(stock_ticker):
+def analyze_fundamentals(stock_ticker,sector):
     stock = yf.Ticker(stock_ticker)
     info = stock.info
     
@@ -51,6 +51,8 @@ def analyze_fundamentals(stock_ticker):
     share_price = info.get("currentPrice")
     
     return {
+        "Ticker": stock_ticker,
+        "Sector": sector,
         "EPS": eps,
         "Revenue": revenue,
         "MarketCap": market_cap,
@@ -73,8 +75,10 @@ def select_top_stocks(config):
     sector_dict = categorize_by_sector(sp500_table)
     sector_performance = get_sector_performance(sector_dict, config["performance_period"])
     print("Sector Performance (YTD):\n", sector_performance)
-    
-    top_sectors = sector_performance.nlargest(3).index.tolist()
+    banned_sectors = config.get("banned_sectors", [])
+    top_n_sectors = config.get("top_n_sectors", 3)
+
+    top_sectors = [sector for sector in sector_performance.nlargest(len(sector_performance)).index if sector not in banned_sectors][:top_n_sectors]
     print("Top Sectors:", top_sectors)
     
     stock_candidates = []
@@ -84,9 +88,9 @@ def select_top_stocks(config):
         print(f"Stocks in sector {sector}: {stocks}")
         
         for stock in stocks:
-            fundamentals = analyze_fundamentals(stock)
+            fundamentals = analyze_fundamentals(stock, sector)
             print(f"Fundamentals for {stock}: {fundamentals}")
-            stock_candidates.append({"Ticker": stock, **fundamentals})
+            stock_candidates.append(fundamentals)
     
     df = pd.DataFrame(stock_candidates)
     print("DataFrame before dropping NaNs:\n", df)

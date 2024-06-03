@@ -18,11 +18,13 @@ The configuration parameters are stored in a `config.json` file. Below is an exa
 
 ```json
 {
-  "total_value": 32000,
-  "num_picks": 8,
-  "flat_fee": 9.99,
-  "filter_pe_ratio": true,
-  "pe_ratio_threshold": 25,
-  "output_filename": "top_stocks.xlsx",
-  "performance_period": "ytd"
-}
+    "total_value": 32000,
+    "num_picks": 10,
+    "flat_fee": 9.99,
+    "filter_pe_ratio": true,
+    "pe_ratio_threshold": 25,
+    "output_filename": "top_stocks_ytd.xlsx",
+    "performance_period": "ytd",
+    "top_n_sectors": 4,
+    "banned_sectors": ["Energy"]
+  }
