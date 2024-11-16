@@ -5,6 +5,7 @@ import requests
 from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import json
+import time
 
 def load_config(file_path):
     with open(file_path, 'r') as file:
@@ -16,8 +17,10 @@ def get_sp500_tickers():
     response = requests.get(url)
     tables = pd.read_html(response.text)
     sp500_table = tables[0]
-    tickers = sp500_table['Symbol'].tolist()
-    return tickers, sp500_table
+    non_class_c_shares = sp500_table[~sp500_table['Security'].str.contains('Class C', na=False)]
+    # Preserve Voting rights
+    tickers = non_class_c_shares['Symbol'].tolist()
+    return tickers, non_class_c_shares
 
 def categorize_by_sector(sp500_table):
     sector_dict = defaultdict(list)
@@ -27,42 +30,60 @@ def categorize_by_sector(sp500_table):
 
 def get_sector_performance(sector_dict, period):
     sector_performance = {}
-    
+
     for sector, tickers in sector_dict.items():
         tickers_str = " ".join(tickers)
-        sector_data = yf.download(tickers_str, period=period, group_by='ticker', auto_adjust=True)
-        sector_close = sector_data.xs('Close', axis=1, level=1)
-        sector_performance[sector] = (sector_close.iloc[-1].sum() / sector_close.iloc[0].sum()) - 1
-    
+        try:
+            sector_data = yf.download(tickers_str, period=period, group_by='ticker', auto_adjust=True)
+            if sector_data.empty:  # Handle empty downloads
+                print(f"No data for sector {sector}. Skipping.")
+                continue
+            sector_close = sector_data.xs('Close', axis=1, level=1)
+            if sector_close.empty:  # Handle missing 'Close' data
+                print(f"No 'Close' data for sector {sector}. Skipping.")
+                continue
+            sector_performance[sector] = (sector_close.iloc[-1].sum() / sector_close.iloc[0].sum()) - 1
+        except Exception as e:
+            print(f"Error fetching sector performance for {sector}: {e}")
+            sector_performance[sector] = None  # Mark as failed
+
     return pd.Series(sector_performance, name="Performance")
 
+
 def analyze_fundamentals(stock_ticker,sector):
+    time.sleep(1)
     stock = yf.Ticker(stock_ticker)
-    info = stock.info
-    
-    eps = info.get("trailingEps")
-    revenue = info.get("totalRevenue")
-    market_cap = info.get("marketCap")
-    pe_ratio = info.get("trailingPE")
-    price_to_sales = info.get("priceToSalesTrailing12Months")
-    price_to_book = info.get("priceToBook")
-    ebitda = info.get("ebitda")
-    profit_margins = info.get("profitMargins")
-    share_price = info.get("currentPrice")
-    
-    return {
-        "Ticker": stock_ticker,
-        "Sector": sector,
-        "EPS": eps,
-        "Revenue": revenue,
-        "MarketCap": market_cap,
-        "PE_Ratio": pe_ratio,
-        "Price_to_Sales": price_to_sales,
-        "Price_to_Book": price_to_book,
-        "EBITDA": ebitda,
-        "Profit_Margins": profit_margins,
-        "Share_Price": share_price
-    }
+    try:
+            
+        info = stock.info
+        #time.sleep(1)
+        
+        eps = info.get("trailingEps")
+        revenue = info.get("totalRevenue")
+        market_cap = info.get("marketCap")
+        pe_ratio = info.get("trailingPE")
+        price_to_sales = info.get("priceToSalesTrailing12Months")
+        price_to_book = info.get("priceToBook")
+        ebitda = info.get("ebitda")
+        profit_margins = info.get("profitMargins")
+        share_price = info.get("currentPrice")
+        
+        return {
+            "Ticker": stock_ticker,
+            "Sector": sector,
+            "EPS": eps,
+            "Revenue": revenue,
+            "MarketCap": market_cap,
+            "PE_Ratio": pe_ratio,
+            "Price_to_Sales": price_to_sales,
+            "Price_to_Book": price_to_book,
+            "EBITDA": ebitda,
+            "Profit_Margins": profit_margins,
+            "Share_Price": share_price
+        }
+    except Exception as e:
+        print(f"Error fetching data for {stock_ticker}: {e}")
+        return None
 
 def get_exchange_rate():
     url = 'https://api.exchangerate-api.com/v4/latest/USD'
@@ -133,6 +154,8 @@ def select_top_stocks(config):
     top_stocks = df.nsmallest(config["num_picks"], "Score")
     
     return top_stocks, sector_performance
+
+
 
 """def build_portfolio(top_stocks, config):
     exchange_rate = get_exchange_rate()
