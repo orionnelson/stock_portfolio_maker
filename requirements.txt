@@ -1,4 +1,9 @@
 yfinance
+numpy 
 pandas
 requests
 openpyxl
+cython
+prophet 
+statsmodels
+pillow

@@ -6,6 +6,12 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import json
 import time
+from statsmodels.tsa.arima.model import ARIMA
+from prophet import Prophet
+import matplotlib.pyplot as plt
+from openpyxl.drawing.image import Image as OpenpyxlImage
+from io import BytesIO
+from PIL import Image
 
 def load_config(file_path):
     with open(file_path, 'r') as file:
@@ -156,6 +162,56 @@ def select_top_stocks(config):
     return top_stocks, sector_performance
 
 
+def forecast_with_arima(data, periods):
+    # Ensure the data has a proper datetime index and set frequency
+    data = data.asfreq('D')  # Enforce daily frequency
+    
+    # Fit the ARIMA model
+    model = ARIMA(data, order=(5, 1, 0))
+    model_fit = model.fit()
+    
+    # Generate forecast
+    forecast = model_fit.forecast(steps=periods)
+    
+    # Create a proper datetime index for the forecast
+    forecast_index = pd.date_range(
+        start=data.index[-1] + pd.Timedelta(days=1),  # Start the forecast after the last historical date
+        periods=periods,
+        freq='D'
+    )
+    
+    # Return the forecast as a pandas Series with the correct index
+    return pd.Series(forecast, index=forecast_index)
+
+
+def forecast_with_prophet(data, periods):
+    df = data.reset_index()
+    df.columns = ['ds', 'y']
+    df['ds'] = df['ds'].dt.tz_localize(None)  # Remove timezone information
+    model = Prophet()
+    model.fit(df)
+    future = model.make_future_dataframe(periods=periods)
+    forecast = model.predict(future)
+    return forecast[['ds', 'yhat']]
+
+def visualize_forecast(stock, historical, arima_forecast, prophet_forecast):
+    arima_index = pd.date_range(
+        start=historical.index[-1] + pd.Timedelta(days=1),
+        periods=len(arima_forecast),
+        freq='D'
+    )
+    plt.figure(figsize=(12, 6))
+    plt.plot(historical, label="Historical Data", color="blue")
+    plt.plot(arima_index, arima_forecast, label="ARIMA Forecast", color="orange")
+    plt.plot(prophet_forecast['ds'], prophet_forecast['yhat'], label="Prophet Forecast", color="green")
+    plt.title(f"Forecast for {stock}")
+    plt.xlabel("Date")
+    plt.ylabel("Price")
+    plt.legend()
+    plt.grid()
+    plt.tight_layout()
+    plt.show()
+
 
 """def build_portfolio(top_stocks, config):
     exchange_rate = get_exchange_rate()
@@ -213,6 +269,102 @@ def add_to_excel(top_stocks, sector_performance, filename):
     
     wb.save(filename)
 
+def save_forecast_to_excel_predict(top_stocks, sector_performance, filename,config):
+        wb = Workbook()
+        ws1 = wb.active
+        ws1.title = "Top Stocks"
+        t_period = config["historical"]
+        
+        for r in dataframe_to_rows(top_stocks, index=False, header=True):
+            ws1.append(r)
+        
+        ws2 = wb.create_sheet(title="Sector Performance")
+        sector_df = pd.DataFrame(sector_performance, columns=['Performance'])
+        for r in dataframe_to_rows(sector_df.reset_index(), index=False, header=True):
+            ws2.append(r)
+        
+        # Create a sheet for each stock's forecast
+        for _, stock in top_stocks.iterrows():
+            ticker = stock["Ticker"]
+            stock_data = yf.download(ticker, period=t_period, auto_adjust=True)["Close"]
+
+            #arima_forecast = forecast_with_arima(stock_data, periods=30)
+            prophet_forecast1 = forecast_with_prophet(stock_data, periods=180)
+            prophet_forecast2 = forecast_with_prophet(stock_data, periods=60)
+            prophet_forecast3 = forecast_with_prophet(stock_data, periods=30)
+            prophet_forcasts = {"180 day":prophet_forecast1,"60 day" :prophet_forecast2, "30 day": prophet_forecast3  }
+            # Generate the forecast visualization
+            img_stream = generate_forecast_image(ticker, stock_data,  prophet_forcasts)
+
+            # Add the image to a new sheet
+            ws_forecast = wb.create_sheet(title=f"{ticker}_Forecast")
+            img = OpenpyxlImage(img_stream)
+            ws_forecast.add_image(img, "A1")
+
+            # Calculate and add Prophet percentage changes
+            try:
+                actual_price = stock_data.iloc[-1].values[0]  # Latest historical price
+            except:
+                    pass
+            try:
+                stock_data['Close'].iloc[-1]  # Latest historical price
+            except:
+                    pass
+
+            ws_forecast.append(["Detail", "Value"])
+            ws_forecast.append(["Actual Price", actual_price])
+
+            row_offset = ws_forecast.max_row + 2  # Leave space for visual clarity
+            ws_forecast.cell(row=row_offset, column=1, value="Forecast Period")
+            ws_forecast.cell(row=row_offset, column=2, value="Forecasted Price")
+            ws_forecast.cell(row=row_offset, column=3, value="Percent Change")
+            ws_forecast.cell(row=row_offset, column=4, value="Prophet Percentage")
+            row_offset += 1
+
+            for label, forecast in prophet_forcasts.items():
+                forecast_price = forecast['yhat'].iloc[-1]  # Last forecasted price
+                percent_change = (forecast_price - actual_price) / actual_price * 100
+                prophet_percent = percent_change  # Could add more logic here if needed
+                
+                # Write details into Excel
+                ws_forecast.cell(row=row_offset, column=1, value=label)
+                ws_forecast.cell(row=row_offset, column=2, value=forecast_price)
+                ws_forecast.cell(row=row_offset, column=3, value=f"{percent_change:.2f}%")
+                ws_forecast.cell(row=row_offset, column=4, value=f"{prophet_percent:.2f}%")
+                row_offset += 1
+
+
+
+        wb.save(filename)
+
+def generate_forecast_image(ticker, historical, prophet_forecasts):
+    #two_years_ago = historical.index[-1] - pd.Timedelta(days=730)
+    #historical_filtered = historical[historical.index >= two_years_ago]
+    plt.figure(figsize=(12, 6))
+    plt.plot(historical, label="Historical Data", color="blue")
+    #plt.plot(range(len(historical), len(historical) + len(arima_forecast)), arima_forecast, label="ARIMA Forecast", color="orange")
+    forcast = None
+    colors = ['green', 'orange', 'purple', 'red', 'cyan']
+    for idx, (label, forecast) in enumerate(prophet_forecasts.items()):
+        color = colors[idx % len(colors)]  # Cycle through colors if more forecasts than colors
+        plt.plot(forecast['ds'], forecast['yhat'], label=f"{label} Forecast", color=color, linewidth=2)
+    """for label, forecast in prophet_forecasts.items():
+        plt.plot(forecast['ds'], forecast['yhat'], label=f"{label} Forecast", linewidth=2)
+    for forecast in prophet_forecasts:
+        plt.plot(forecast['ds'], forecast['yhat'], label="Prophet Forecast", color="green")"""
+    plt.title(f"Forecast for {ticker}")
+    plt.xlabel("Date")
+    plt.ylabel("Price")
+    plt.legend()
+    plt.grid()
+    
+    # Save the plot to a BytesIO stream
+    img_stream = BytesIO()
+    plt.savefig(img_stream, format='png', bbox_inches='tight')
+    img_stream.seek(0)
+    plt.close()
+    return img_stream
+
 if __name__ == "__main__":
     config = load_config('config.json')
     top_stocks, sector_performance = select_top_stocks(config)
@@ -221,5 +373,6 @@ if __name__ == "__main__":
     top_stocks = build_portfolio(top_stocks, config)
     print("Portfolio:\n", top_stocks)
     
-    add_to_excel(top_stocks, sector_performance, config["output_filename"])
+    #add_to_excel(top_stocks, sector_performance, config["output_filename"])
+    save_forecast_to_excel_predict(top_stocks, sector_performance, config["output_filename"],config)
     print(f"Data saved to '{config['output_filename']}'")
