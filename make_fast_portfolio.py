@@ -234,25 +234,26 @@ def build_portfolio(top_stocks, config):
     total_value = config["total_value"]
 
     # Convert share prices to CAD
-    top_stocks[f'Share_Price_{crncy}'] = top_stocks['Share_Price'] * exchange_rate
+    crncy_identifier =f'Share_Price_{crncy}'
+    top_stocks[crncy_identifier] = top_stocks['Share_Price'] * exchange_rate
 
     # Calculate the initial evenly distributed investment amount
     initial_investment_per_stock = total_value / len(top_stocks)
 
     # Initialize the number of shares to buy for each stock
-    top_stocks['Num_Shares'] = (initial_investment_per_stock / (top_stocks['Share_Price_CAD'] + flat_fee)).apply(lambda x: int(x))
+    top_stocks['Num_Shares'] = (initial_investment_per_stock / (top_stocks[crncy_identifier] + flat_fee)).apply(lambda x: int(x))
 
     # Calculate the initial investment for each stock
-    top_stocks['Investment'] = (top_stocks['Num_Shares'] * top_stocks['Share_Price_CAD']) + flat_fee
+    top_stocks['Investment'] = (top_stocks['Num_Shares'] * top_stocks[crncy_identifier]) + flat_fee
 
     # Calculate the remaining value to invest
     total_invested = top_stocks['Investment'].sum()
     remaining_value = total_value - total_invested
 
     # Adjust for the remainder to distribute any leftover funds
-    while remaining_value >= top_stocks['Share_Price_CAD'].min():
+    while remaining_value >= top_stocks[crncy_identifier].min():
         for index, row in top_stocks.iterrows():
-            additional_investment = row['Share_Price_CAD'] 
+            additional_investment = row[crncy_identifier] 
             if remaining_value >= additional_investment:
                 top_stocks.at[index, 'Num_Shares'] += 1
                 top_stocks.at[index, 'Investment'] += additional_investment
