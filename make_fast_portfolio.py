@@ -11,7 +11,6 @@ from prophet import Prophet
 import matplotlib.pyplot as plt
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from io import BytesIO
-from PIL import Image
 import os
 import win32com.client
 
@@ -64,7 +63,6 @@ def analyze_fundamentals(stock_ticker,sector):
     try:
             
         info = stock.info
-        #time.sleep(1)
         
         eps = info.get("trailingEps")
         revenue = info.get("totalRevenue")
@@ -176,26 +174,6 @@ def select_top_stocks(config):
     return top_stocks, sector_performance
 
 
-def forecast_with_arima(data, periods):
-    # Ensure the data has a proper datetime index and set frequency
-    data = data.asfreq('D')  # Enforce daily frequency
-    
-    # Fit the ARIMA model
-    model = ARIMA(data, order=(5, 1, 0))
-    model_fit = model.fit()
-    
-    # Generate forecast
-    forecast = model_fit.forecast(steps=periods)
-    
-    # Create a proper datetime index for the forecast
-    forecast_index = pd.date_range(
-        start=data.index[-1] + pd.Timedelta(days=1),  # Start the forecast after the last historical date
-        periods=periods,
-        freq='D'
-    )
-    
-    # Return the forecast as a pandas Series with the correct index
-    return pd.Series(forecast, index=forecast_index)
 
 
 def forecast_with_prophet(data, periods):
@@ -208,23 +186,6 @@ def forecast_with_prophet(data, periods):
     forecast = model.predict(future)
     return forecast[['ds', 'yhat']]
 
-def visualize_forecast(stock, historical, arima_forecast, prophet_forecast):
-    arima_index = pd.date_range(
-        start=historical.index[-1] + pd.Timedelta(days=1),
-        periods=len(arima_forecast),
-        freq='D'
-    )
-    plt.figure(figsize=(12, 6))
-    plt.plot(historical, label="Historical Data", color="blue")
-    plt.plot(arima_index, arima_forecast, label="ARIMA Forecast", color="orange")
-    plt.plot(prophet_forecast['ds'], prophet_forecast['yhat'], label="Prophet Forecast", color="green")
-    plt.title(f"Forecast for {stock}")
-    plt.xlabel("Date")
-    plt.ylabel("Price")
-    plt.legend()
-    plt.grid()
-    plt.tight_layout()
-    plt.show()
 
 # Builds portfolio for you based on top stocks Data_frame picks
 def build_portfolio(top_stocks, config):
