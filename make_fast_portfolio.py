@@ -12,6 +12,8 @@ import matplotlib.pyplot as plt
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from io import BytesIO
 from PIL import Image
+import os
+import win32com.client
 
 def load_config(file_path):
     with open(file_path, 'r') as file:
@@ -91,11 +93,23 @@ def analyze_fundamentals(stock_ticker,sector):
         print(f"Error fetching data for {stock_ticker}: {e}")
         return None
 
-def get_exchange_rate():
-    url = 'https://api.exchangerate-api.com/v4/latest/USD'
-    response = requests.get(url)
-    data = response.json()
-    return data['rates']['CAD']
+# USD Stocks We must Convert To Selected Currancy Based On Excange Rate 
+def get_exchange_rate(currency):
+        currency = str(currency).upper()
+        url = 'https://api.exchangerate-api.com/v4/latest/USD'
+        try:
+            response = requests.get(url)
+            response.raise_for_status()  # Raise HTTPError for bad responses
+            data = response.json()
+        except requests.RequestException as e:
+            raise Exception(f"Failed to fetch exchange rates: {e}")
+        
+        rates = data.get("rates", {})
+        if currency in rates:
+            return rates[currency]
+        else:
+            raise Exception(f"Currency '{currency}' not found in exchange rates : {str(rates.keys())}")
+
 
 def select_top_stocks(config):
     tickers, sp500_table = get_sp500_tickers()
@@ -212,22 +226,15 @@ def visualize_forecast(stock, historical, arima_forecast, prophet_forecast):
     plt.tight_layout()
     plt.show()
 
-
-"""def build_portfolio(top_stocks, config):
-    exchange_rate = get_exchange_rate()
-    flat_fee = config["flat_fee"]
-    top_stocks['Share_Price_CAD'] = top_stocks['Share_Price'] * exchange_rate
-    top_stocks['Num_Shares'] = (config["total_value"] / (top_stocks['Share_Price_CAD'] + flat_fee)).apply(lambda x: int(x / len(top_stocks)))
-    top_stocks['Investment'] = (top_stocks['Num_Shares'] * top_stocks['Share_Price_CAD']) + flat_fee
-    return top_stocks"""
-
+# Builds portfolio for you based on top stocks Data_frame picks
 def build_portfolio(top_stocks, config):
-    exchange_rate = get_exchange_rate()
+    crncy = config["currency"]
+    exchange_rate = get_exchange_rate(currency=crncy)
     flat_fee = config["flat_fee"]
     total_value = config["total_value"]
 
     # Convert share prices to CAD
-    top_stocks['Share_Price_CAD'] = top_stocks['Share_Price'] * exchange_rate
+    top_stocks[f'Share_Price_{crncy}'] = top_stocks['Share_Price'] * exchange_rate
 
     # Calculate the initial evenly distributed investment amount
     initial_investment_per_stock = total_value / len(top_stocks)
@@ -270,6 +277,31 @@ def add_to_excel(top_stocks, sector_performance, filename):
     wb.save(filename)
 
 def save_forecast_to_excel_predict(top_stocks, sector_performance, filename,config):
+        def close_excel_file_if_open(filepath):
+            try:
+                excel = win32com.client.Dispatch("Excel.Application")
+                for workbook in excel.Workbooks:
+                    if workbook.FullName == os.path.abspath(filepath):
+                        workbook.Close(False)  # Close without saving changes
+                        excel.Quit()
+                        break
+            except Exception as e:
+                raise Exception(f"Failed to close Excel file: {e}")
+
+        # Check if the file already exists and handle it
+        if os.path.exists(filename):
+            try:
+                os.remove(filename)
+            except PermissionError:
+                # Attempt to close the Excel window holding the file
+                close_excel_file_if_open(filename)
+                # Retry deleting the file after closing it
+                try:
+                    os.remove(filename)
+                except Exception as e:
+                    raise Exception(f"Unable to delete the file {filename} after closing Excel: {e}")
+
+
         wb = Workbook()
         ws1 = wb.active
         ws1.title = "Top Stocks"

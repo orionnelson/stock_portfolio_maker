@@ -7,3 +7,4 @@ cython
 prophet 
 statsmodels
 pillow
+pywin32
