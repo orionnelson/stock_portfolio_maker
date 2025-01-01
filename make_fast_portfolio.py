@@ -11,7 +11,8 @@ from prophet import Prophet
 import matplotlib.pyplot as plt
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from io import BytesIO
-from PIL import Image
+import os
+import win32com.client
 
 def load_config(file_path):
     with open(file_path, 'r') as file:
@@ -62,7 +63,6 @@ def analyze_fundamentals(stock_ticker,sector):
     try:
             
         info = stock.info
-        #time.sleep(1)
         
         eps = info.get("trailingEps")
         revenue = info.get("totalRevenue")
@@ -91,11 +91,23 @@ def analyze_fundamentals(stock_ticker,sector):
         print(f"Error fetching data for {stock_ticker}: {e}")
         return None
 
-def get_exchange_rate():
-    url = 'https://api.exchangerate-api.com/v4/latest/USD'
-    response = requests.get(url)
-    data = response.json()
-    return data['rates']['CAD']
+# USD Stocks We must Convert To Selected Currancy Based On Excange Rate 
+def get_exchange_rate(currency):
+        currency = str(currency).upper()
+        url = 'https://api.exchangerate-api.com/v4/latest/USD'
+        try:
+            response = requests.get(url)
+            response.raise_for_status()  # Raise HTTPError for bad responses
+            data = response.json()
+        except requests.RequestException as e:
+            raise Exception(f"Failed to fetch exchange rates: {e}")
+        
+        rates = data.get("rates", {})
+        if currency in rates:
+            return rates[currency]
+        else:
+            raise Exception(f"Currency '{currency}' not found in exchange rates : {str(rates.keys())}")
+
 
 def select_top_stocks(config):
     tickers, sp500_table = get_sp500_tickers()
@@ -162,26 +174,6 @@ def select_top_stocks(config):
     return top_stocks, sector_performance
 
 
-def forecast_with_arima(data, periods):
-    # Ensure the data has a proper datetime index and set frequency
-    data = data.asfreq('D')  # Enforce daily frequency
-    
-    # Fit the ARIMA model
-    model = ARIMA(data, order=(5, 1, 0))
-    model_fit = model.fit()
-    
-    # Generate forecast
-    forecast = model_fit.forecast(steps=periods)
-    
-    # Create a proper datetime index for the forecast
-    forecast_index = pd.date_range(
-        start=data.index[-1] + pd.Timedelta(days=1),  # Start the forecast after the last historical date
-        periods=periods,
-        freq='D'
-    )
-    
-    # Return the forecast as a pandas Series with the correct index
-    return pd.Series(forecast, index=forecast_index)
 
 
 def forecast_with_prophet(data, periods):
@@ -194,58 +186,35 @@ def forecast_with_prophet(data, periods):
     forecast = model.predict(future)
     return forecast[['ds', 'yhat']]
 
-def visualize_forecast(stock, historical, arima_forecast, prophet_forecast):
-    arima_index = pd.date_range(
-        start=historical.index[-1] + pd.Timedelta(days=1),
-        periods=len(arima_forecast),
-        freq='D'
-    )
-    plt.figure(figsize=(12, 6))
-    plt.plot(historical, label="Historical Data", color="blue")
-    plt.plot(arima_index, arima_forecast, label="ARIMA Forecast", color="orange")
-    plt.plot(prophet_forecast['ds'], prophet_forecast['yhat'], label="Prophet Forecast", color="green")
-    plt.title(f"Forecast for {stock}")
-    plt.xlabel("Date")
-    plt.ylabel("Price")
-    plt.legend()
-    plt.grid()
-    plt.tight_layout()
-    plt.show()
 
-
-"""def build_portfolio(top_stocks, config):
-    exchange_rate = get_exchange_rate()
-    flat_fee = config["flat_fee"]
-    top_stocks['Share_Price_CAD'] = top_stocks['Share_Price'] * exchange_rate
-    top_stocks['Num_Shares'] = (config["total_value"] / (top_stocks['Share_Price_CAD'] + flat_fee)).apply(lambda x: int(x / len(top_stocks)))
-    top_stocks['Investment'] = (top_stocks['Num_Shares'] * top_stocks['Share_Price_CAD']) + flat_fee
-    return top_stocks"""
-
+# Builds portfolio for you based on top stocks Data_frame picks
 def build_portfolio(top_stocks, config):
-    exchange_rate = get_exchange_rate()
+    crncy = config["currency"]
+    exchange_rate = get_exchange_rate(currency=crncy)
     flat_fee = config["flat_fee"]
     total_value = config["total_value"]
 
     # Convert share prices to CAD
-    top_stocks['Share_Price_CAD'] = top_stocks['Share_Price'] * exchange_rate
+    crncy_identifier =f'Share_Price_{crncy}'
+    top_stocks[crncy_identifier] = top_stocks['Share_Price'] * exchange_rate
 
     # Calculate the initial evenly distributed investment amount
     initial_investment_per_stock = total_value / len(top_stocks)
 
     # Initialize the number of shares to buy for each stock
-    top_stocks['Num_Shares'] = (initial_investment_per_stock / (top_stocks['Share_Price_CAD'] + flat_fee)).apply(lambda x: int(x))
+    top_stocks['Num_Shares'] = (initial_investment_per_stock / (top_stocks[crncy_identifier] + flat_fee)).apply(lambda x: int(x))
 
     # Calculate the initial investment for each stock
-    top_stocks['Investment'] = (top_stocks['Num_Shares'] * top_stocks['Share_Price_CAD']) + flat_fee
+    top_stocks['Investment'] = (top_stocks['Num_Shares'] * top_stocks[crncy_identifier]) + flat_fee
 
     # Calculate the remaining value to invest
     total_invested = top_stocks['Investment'].sum()
     remaining_value = total_value - total_invested
 
     # Adjust for the remainder to distribute any leftover funds
-    while remaining_value >= top_stocks['Share_Price_CAD'].min():
+    while remaining_value >= top_stocks[crncy_identifier].min():
         for index, row in top_stocks.iterrows():
-            additional_investment = row['Share_Price_CAD'] 
+            additional_investment = row[crncy_identifier] 
             if remaining_value >= additional_investment:
                 top_stocks.at[index, 'Num_Shares'] += 1
                 top_stocks.at[index, 'Investment'] += additional_investment
@@ -270,6 +239,31 @@ def add_to_excel(top_stocks, sector_performance, filename):
     wb.save(filename)
 
 def save_forecast_to_excel_predict(top_stocks, sector_performance, filename,config):
+        def close_excel_file_if_open(filepath):
+            try:
+                excel = win32com.client.Dispatch("Excel.Application")
+                for workbook in excel.Workbooks:
+                    if workbook.FullName == os.path.abspath(filepath):
+                        workbook.Close(False)  # Close without saving changes
+                        excel.Quit()
+                        break
+            except Exception as e:
+                raise Exception(f"Failed to close Excel file: {e}")
+
+        # Check if the file already exists and handle it
+        if os.path.exists(filename):
+            try:
+                os.remove(filename)
+            except PermissionError:
+                # Attempt to close the Excel window holding the file
+                close_excel_file_if_open(filename)
+                # Retry deleting the file after closing it
+                try:
+                    os.remove(filename)
+                except Exception as e:
+                    raise Exception(f"Unable to delete the file {filename} after closing Excel: {e}")
+
+
         wb = Workbook()
         ws1 = wb.active
         ws1.title = "Top Stocks"
