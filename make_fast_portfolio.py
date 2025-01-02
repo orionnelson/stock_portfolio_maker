@@ -6,13 +6,42 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import json
 import time
-from statsmodels.tsa.arima.model import ARIMA
 from prophet import Prophet
 import matplotlib.pyplot as plt
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from io import BytesIO
 import os
 import win32com.client
+import pickle
+from datetime import datetime
+
+
+
+
+
+CACHE_FILE_TEMPLATE = "stock_data_cache_{}.pkl"
+
+def get_cache_file():
+    """Generates the cache file name based on the current date."""
+    today = datetime.now().strftime("%Y-%m-%d")
+    return CACHE_FILE_TEMPLATE.format(today)
+
+
+def load_cache():
+    """Loads the cache from the pickle file."""
+    cache_file = get_cache_file()
+    if os.path.exists(cache_file):
+        with open(cache_file, 'rb') as file:
+            return pickle.load(file)
+    return {}
+
+def save_cache(cache):
+    """Saves the cache to the pickle file."""
+    cache_file = get_cache_file()
+    with open(cache_file, 'wb') as file:
+        pickle.dump(cache, file)
+
+
 
 def load_config(file_path):
     with open(file_path, 'r') as file:
@@ -35,8 +64,16 @@ def categorize_by_sector(sp500_table):
         sector_dict[row['GICS Sector']].append(row['Symbol'])
     return sector_dict
 
-def get_sector_performance(sector_dict, period):
+def get_sector_performance(sector_dict, period, mode="lazy"):
+
+    cache = load_cache()
+    # If in lazy mode and cached sector data exists, return cached data
+    if mode == "lazy" and "sector_performance" in cache:
+        print("Loading sector performance from cache.")
+        return pd.Series(cache["sector_performance"], name="Performance")
+
     sector_performance = {}
+    sector_data_cache = {}
 
     for sector, tickers in sector_dict.items():
         tickers_str = " ".join(tickers)
@@ -49,15 +86,29 @@ def get_sector_performance(sector_dict, period):
             if sector_close.empty:  # Handle missing 'Close' data
                 print(f"No 'Close' data for sector {sector}. Skipping.")
                 continue
+              # Cache sector data
+            sector_data_cache[sector] = sector_data
             sector_performance[sector] = (sector_close.iloc[-1].sum() / sector_close.iloc[0].sum()) - 1
         except Exception as e:
             print(f"Error fetching sector performance for {sector}: {e}")
             sector_performance[sector] = None  # Mark as failed
 
+    cache["sector_data"] = sector_data_cache
+    cache["sector_performance"] = sector_performance
+    save_cache(cache)
+
     return pd.Series(sector_performance, name="Performance")
 
 
-def analyze_fundamentals(stock_ticker,sector):
+def analyze_fundamentals(stock_ticker,sector,mode='lazy'):
+
+    cache = load_cache()
+    ticker_key = f"fundamentals_{stock_ticker}"
+
+    if mode == "lazy" and ticker_key in cache:
+        print(f"Loading cached fundamentals for {stock_ticker}.")
+        return cache[ticker_key]
+    
     time.sleep(1)
     stock = yf.Ticker(stock_ticker)
     try:
@@ -73,20 +124,26 @@ def analyze_fundamentals(stock_ticker,sector):
         ebitda = info.get("ebitda")
         profit_margins = info.get("profitMargins")
         share_price = info.get("currentPrice")
-        
-        return {
+
+
+        fundamentals = {
             "Ticker": stock_ticker,
             "Sector": sector,
-            "EPS": eps,
-            "Revenue": revenue,
-            "MarketCap": market_cap,
-            "PE_Ratio": pe_ratio,
-            "Price_to_Sales": price_to_sales,
-            "Price_to_Book": price_to_book,
-            "EBITDA": ebitda,
-            "Profit_Margins": profit_margins,
-            "Share_Price": share_price
+            "EPS": info.get("trailingEps"),
+            "Revenue": info.get("totalRevenue"),
+            "MarketCap": info.get("marketCap"),
+            "PE_Ratio": info.get("trailingPE"),
+            "Price_to_Sales": info.get("priceToSalesTrailing12Months"),
+            "Price_to_Book": info.get("priceToBook"),
+            "EBITDA": info.get("ebitda"),
+            "Profit_Margins": info.get("profitMargins"),
+            "Share_Price": info.get("currentPrice"),
         }
+
+
+        cache[ticker_key] = fundamentals
+        save_cache(cache) 
+        return fundamentals
     except Exception as e:
         print(f"Error fetching data for {stock_ticker}: {e}")
         return None
@@ -112,7 +169,7 @@ def get_exchange_rate(currency):
 def select_top_stocks(config):
     tickers, sp500_table = get_sp500_tickers()
     sector_dict = categorize_by_sector(sp500_table)
-    sector_performance = get_sector_performance(sector_dict, config["performance_period"])
+    sector_performance = get_sector_performance(sector_dict, config["performance_period"],mode=config.get('cache','lazy')) # Set Cache to Anything else to get Sector Performance Eacg Tune 
     print("Sector Performance (YTD):\n", sector_performance)
     banned_sectors = config.get("banned_sectors", [])
     top_n_sectors = config.get("top_n_sectors", 3)
@@ -127,7 +184,7 @@ def select_top_stocks(config):
         print(f"Stocks in sector {sector}: {stocks}")
         
         for stock in stocks:
-            fundamentals = analyze_fundamentals(stock, sector)
+            fundamentals = analyze_fundamentals(stock, sector,mode=config.get('cache','lazy'))
             print(f"Fundamentals for {stock}: {fundamentals}")
             stock_candidates.append(fundamentals)
     
@@ -238,6 +295,41 @@ def add_to_excel(top_stocks, sector_performance, filename):
     
     wb.save(filename)
 
+def fetch_stock_forecast(top_stocks, t_period, mode="lazy"):
+    """
+    Fetches stock data for forecasts, utilizing caching.
+
+    Args:
+        top_stocks (pd.DataFrame): DataFrame of top stocks with a "Ticker" column.
+        t_period (str): Period for fetching stock data.
+        mode (str): Mode of operation ("lazy" to use cache, fetch otherwise).
+
+    Returns:
+        dict: Dictionary with tickers as keys and stock data as values.
+    """
+    cache = load_cache()
+    forecasts = {}
+
+    for _, stock in top_stocks.iterrows():
+        ticker = stock["Ticker"]
+        ticker_key = f"forecast_data_{ticker}_{t_period}"
+
+        if mode == "lazy" and ticker_key in cache:
+            print(f"Loading cached data for {ticker}.")
+            forecasts[ticker] = cache[ticker_key]
+        else:
+            try:
+                print(f"Downloading data for {ticker}.")
+                stock_data = yf.download(ticker, period=t_period, auto_adjust=True)["Close"]
+                forecasts[ticker] = stock_data
+                cache[ticker_key] = stock_data
+            except Exception as e:
+                print(f"Error fetching data for {ticker}: {e}")
+
+    save_cache(cache)
+    return forecasts
+
+
 def save_forecast_to_excel_predict(top_stocks, sector_performance, filename,config):
         def close_excel_file_if_open(filepath):
             try:
@@ -278,9 +370,11 @@ def save_forecast_to_excel_predict(top_stocks, sector_performance, filename,conf
             ws2.append(r)
         
         # Create a sheet for each stock's forecast
+
+        forcasts  = fetch_stock_forecast(top_stocks, t_period, mode=config.get('cache','lazy'))
         for _, stock in top_stocks.iterrows():
             ticker = stock["Ticker"]
-            stock_data = yf.download(ticker, period=t_period, auto_adjust=True)["Close"]
+            stock_data = forcasts[ticker]
 
             #arima_forecast = forecast_with_arima(stock_data, periods=30)
             prophet_forecast1 = forecast_with_prophet(stock_data, periods=180)
