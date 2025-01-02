@@ -1,5 +1,5 @@
 {
-    "total_value": 32000,
+    "total_value": 38000,
     "num_picks": 10,
     "flat_fee": 9.99,
     "filter_pe_ratio": true,
@@ -7,8 +7,9 @@
     "output_filename": "top_stocks_1y.xlsx", 
     "performance_period": "1y",
     "top_n_sectors": 4,
-    "banned_sectors": ["Energy"], 
-    "historical" : "1y",
+    "banned_sectors": ["Energy","Financials"], 
+    "historical" : "5y",
     "_comment": "Period '6m' is invalid, must be one of ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max'",
-    "currency": "CAD"  
+    "currency": "CAD",
+    "cache": "lazy"  
   } 
