@@ -14,6 +14,7 @@ import os
 import win32com.client
 import pickle
 from datetime import datetime
+from cgemini1206exp import generate_portfolio_config
 
 
 
@@ -640,8 +641,12 @@ def generate_forecast_image(ticker, historical, prophet_forecasts):
     return img_stream
 
 if __name__ == "__main__":
+    TEST_MODE = True
     config = load_config('config.json')
-
+    if TEST_MODE:
+        port_request = input("What portfolio would you like?: ")
+        print(f"Requested Portfolio with : { port_request}")
+        config = generate_portfolio_config(port_request)
     stock_picks = config.get("picks",None)
     if not stock_picks or not isinstance(stock_picks, (dict, list)):
         top_stocks, sector_performance = select_top_stocks(config)

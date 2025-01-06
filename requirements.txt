@@ -8,3 +8,5 @@ prophet
 statsmodels
 pillow
 pywin32
+google-generativeai
+python-dotenv
