@@ -62,16 +62,24 @@ def get_sp500_tickers():
 def categorize_by_sector(sp500_table):
     sector_dict = defaultdict(list)
     for _, row in sp500_table.iterrows():
+        sector = row.get('GICS Sector')
+        # Skip 'N/A', missing, or empty sectors
+        if pd.isna(sector) or sector.strip().upper() in ['N/A', '']:
+            continue
+
         sector_dict[row['GICS Sector']].append(row['Symbol'])
     return sector_dict
 
 def get_sector_performance(sector_dict, period, mode="lazy"):
+    #print(sector_dict)
+    #print(period)
 
     cache = load_cache()
+    cache_key = f"sector_performance_{period}"
     # If in lazy mode and cached sector data exists, return cached data
-    if mode == "lazy" and "sector_performance" in cache:
+    if mode == "lazy" and cache_key in cache:
         print("Loading sector performance from cache.")
-        return pd.Series(cache["sector_performance"], name="Performance")
+        return pd.Series(cache[cache_key], name="Performance")
 
     sector_performance = {}
     sector_data_cache = {}
@@ -94,8 +102,8 @@ def get_sector_performance(sector_dict, period, mode="lazy"):
             print(f"Error fetching sector performance for {sector}: {e}")
             sector_performance[sector] = None  # Mark as failed
 
-    cache["sector_data"] = sector_data_cache
-    cache["sector_performance"] = sector_performance
+    cache[f"sector_data_{period}"] = sector_data_cache
+    cache[cache_key] = sector_performance
     save_cache(cache)
 
     return pd.Series(sector_performance, name="Performance")
@@ -173,6 +181,8 @@ def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks
     """
     Helper function to dynamically select stocks for the remaining percentage.
     """
+    print("IMP BELOW LINE")
+    print(sector_dict)
     print("Selecting dynamic picks to fill the gap.")
     sector_performance = get_sector_performance(
         sector_dict,
@@ -250,6 +260,13 @@ def select_top_stocks(config, **kwargs):
     # Fetch tickers and sector data
     tickers, sp500_table = get_sp500_tickers()
     sector_dict = categorize_by_sector(sp500_table)
+
+    sector_performance = get_sector_performance(
+        sector_dict,
+        config["performance_period"],
+        mode=config.get("cache", "lazy")
+    )
+    print("Sector Performance (YTD):\n", sector_performance)
 
     # Handle provided stock picks as a dictionary
     if isinstance(stock_picks, dict):
@@ -343,6 +360,8 @@ def select_top_stocks(config, **kwargs):
 
     # Select top stocks
     top_stocks = df.nsmallest(config["num_picks"], "Score")
+
+    print("Sector Performance  Top Stocks END (YTD):\n", sector_performance)
 
     return top_stocks, sector_performance
 
@@ -641,7 +660,7 @@ def generate_forecast_image(ticker, historical, prophet_forecasts):
     return img_stream
 
 if __name__ == "__main__":
-    TEST_MODE = True
+    TEST_MODE = False
     config = load_config('config.json')
     if TEST_MODE:
         port_request = input("What portfolio would you like?: ")
@@ -649,20 +668,25 @@ if __name__ == "__main__":
         config = generate_portfolio_config(port_request)
     stock_picks = config.get("picks",None)
     if not stock_picks or not isinstance(stock_picks, (dict, list)):
+        print("RAN 1")
         top_stocks, sector_performance = select_top_stocks(config)
         print("Top Stocks:\n", top_stocks)
     elif isinstance(stock_picks, dict):
+        print("RAN 2")
         top_stocks, sector_performance = select_top_stocks(config, stock_picks=stock_picks)
     elif isinstance(stock_picks, list):
+        print("RAN 3")
         print("Using provided stock list.")
         stock_picks = stock_picks[:config.get("num_picks", len(stock_picks))]
         equal_percentage = 100 / len(stock_picks)
         stock_picks = {ticker: equal_percentage for ticker in stock_picks}
         top_stocks, sector_performance = select_top_stocks(config, stock_picks=stock_picks)
     else:
+        print("RAN 4")
         top_stocks, sector_performance = select_top_stocks(config)
         print("Top Stocks:\n", top_stocks)
-        
+    print("PERFORMANCE")
+    print(sector_performance)
     
     top_stocks = build_portfolio(top_stocks, config)
     print("Portfolio:\n", top_stocks)
