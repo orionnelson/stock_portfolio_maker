@@ -14,7 +14,7 @@ import os
 import win32com.client
 import pickle
 from datetime import datetime
-from cgemini1206exp import generate_portfolio_config
+
 
 
 
@@ -181,8 +181,6 @@ def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks
     """
     Helper function to dynamically select stocks for the remaining percentage.
     """
-    print("IMP BELOW LINE")
-    print(sector_dict)
     print("Selecting dynamic picks to fill the gap.")
     sector_performance = get_sector_performance(
         sector_dict,
@@ -366,70 +364,6 @@ def select_top_stocks(config, **kwargs):
     return top_stocks, sector_performance
 
 
-
-"""
-    sector_performance = get_sector_performance(sector_dict, config["performance_period"],mode=config.get('cache','lazy')) # Set Cache to Anything else to get Sector Performance Eacg Tune 
-    print("Sector Performance (YTD):\n", sector_performance)
-    banned_sectors = config.get("banned_sectors", [])
-    top_n_sectors = config.get("top_n_sectors", 3)
-
-    top_sectors = [sector for sector in sector_performance.nlargest(len(sector_performance)).index if sector not in banned_sectors][:top_n_sectors]
-    print("Top Sectors:", top_sectors)
-    
-    stock_candidates = []
-    
-    for sector in top_sectors:
-        stocks = sector_dict[sector]
-        print(f"Stocks in sector {sector}: {stocks}")
-        
-        for stock in stocks:
-            fundamentals = analyze_fundamentals(stock, sector,mode=config.get('cache','lazy'))
-            print(f"Fundamentals for {stock}: {fundamentals}")
-            stock_candidates.append(fundamentals)
-    
-    df = pd.DataFrame(stock_candidates)
-    print("DataFrame before dropping NaNs:\n", df)
-    
-    df = df.dropna()
-    print("DataFrame after dropping NaNs:\n", df)
-    
-    numeric_columns = ["EPS", "Revenue", "MarketCap", "PE_Ratio", "Price_to_Sales", "Price_to_Book", "EBITDA", "Profit_Margins", "Share_Price"]
-    for col in numeric_columns:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
-    
-    df = df.dropna()
-    print("DataFrame after converting to numeric and dropping NaNs:\n", df)
-    
-    df = df[(df["EPS"] > 0) & (df["Revenue"] > 0) & (df["MarketCap"] > 0) & (df["PE_Ratio"] > 0)]
-    
-    if config["filter_pe_ratio"]:
-        df = df[df["PE_Ratio"] < config["pe_ratio_threshold"]]
-    
-    print("DataFrame after filtering positive values and PE Ratio:\n", df)
-    
-    # Rank and normalize the values
-    df["EPS_Rank"] = df["EPS"].rank(ascending=False)
-    df["Revenue_Rank"] = df["Revenue"].rank(ascending=False)
-    df["MarketCap_Rank"] = df["MarketCap"].rank(ascending=False)
-    
-    # Normalize the ranks
-    df["EPS_Score"] = df["EPS_Rank"] / df["EPS_Rank"].max()
-    df["Revenue_Score"] = df["Revenue_Rank"] / df["Revenue_Rank"].max()
-    df["MarketCap_Score"] = df["MarketCap_Rank"] / df["MarketCap_Rank"].max()
-    
-    # Calculate the final score
-    df["Score"] = df["EPS_Score"] + df["Revenue_Score"] + df["MarketCap_Score"]
-    
-    df["Score"] = pd.to_numeric(df["Score"], errors='coerce')
-    
-    df = df.dropna(subset=["Score"])
-    print("DataFrame after calculating Score and dropping NaNs:\n", df)
-    
-    top_stocks = df.nsmallest(config["num_picks"], "Score")
-    
-    return top_stocks, sector_performance
-
-"""
 
 
 def forecast_with_prophet(data, periods):
@@ -660,37 +594,33 @@ def generate_forecast_image(ticker, historical, prophet_forecasts):
     return img_stream
 
 if __name__ == "__main__":
-    TEST_MODE = False
+    TEST_MODE = True
     config = load_config('config.json')
     if TEST_MODE:
+        from cgemini1206exp import generate_portfolio_config
         port_request = input("What portfolio would you like?: ")
         print(f"Requested Portfolio with : { port_request}")
         config = generate_portfolio_config(port_request)
     stock_picks = config.get("picks",None)
     if not stock_picks or not isinstance(stock_picks, (dict, list)):
-        print("RAN 1")
         top_stocks, sector_performance = select_top_stocks(config)
         print("Top Stocks:\n", top_stocks)
     elif isinstance(stock_picks, dict):
-        print("RAN 2")
         top_stocks, sector_performance = select_top_stocks(config, stock_picks=stock_picks)
     elif isinstance(stock_picks, list):
-        print("RAN 3")
         print("Using provided stock list.")
         stock_picks = stock_picks[:config.get("num_picks", len(stock_picks))]
         equal_percentage = 100 / len(stock_picks)
         stock_picks = {ticker: equal_percentage for ticker in stock_picks}
         top_stocks, sector_performance = select_top_stocks(config, stock_picks=stock_picks)
     else:
-        print("RAN 4")
         top_stocks, sector_performance = select_top_stocks(config)
         print("Top Stocks:\n", top_stocks)
-    print("PERFORMANCE")
-    print(sector_performance)
     
     top_stocks = build_portfolio(top_stocks, config)
     print("Portfolio:\n", top_stocks)
     
-    #add_to_excel(top_stocks, sector_performance, config["output_filename"])
-    save_forecast_to_excel_predict(top_stocks, sector_performance, config["output_filename"],config)
-    print(f"Data saved to '{config['output_filename']}'")
+    
+    output_file =  config.get("output_filename","portfolio.xlsx")
+    save_forecast_to_excel_predict(top_stocks, sector_performance, output_file,config)
+    print(f"Data saved to '{output_file}'")
