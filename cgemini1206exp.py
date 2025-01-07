@@ -83,8 +83,7 @@ def generate_portfolio_config(port_request: str) -> dict:
     # Validate the structure of the JSON
     required_keys = [
         "total_value", "num_picks", "flat_fee", "filter_pe_ratio", 
-        "pe_ratio_threshold", "performance_period", "top_n_sectors", 
-        "banned_sectors", "historical", "currency", "picks"
+        "pe_ratio_threshold", "performance_period",  "historical", "currency", "picks"
     ]
 
     for key in required_keys:
