@@ -177,7 +177,7 @@ def get_exchange_rate(currency):
 
 
 
-def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks=0):
+def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks=0,excluded_tickers=None):
     """
     Helper function to dynamically select stocks for the remaining percentage.
     """
@@ -205,6 +205,8 @@ def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks
         print(f"Stocks in sector {sector}: {stocks}")
 
         for stock in stocks:
+            if stock in excluded_tickers:
+                continue
             fundamentals = analyze_fundamentals(
                 stock,
                 sector,
@@ -292,12 +294,14 @@ def select_top_stocks(config, **kwargs):
             remaining_percentage = 100 - total_percentage
             print(f"Filling the remaining {remaining_percentage}% with dynamic picks.")
 
+
             # Dynamically select stocks
             dynamic_stocks, _ = _get_dynamic_picks(
                 config,
                 sector_dict,
                 remaining_percentage,
-                len(stock_picks)
+                len(stock_picks),
+                excluded_tickers=set(stock_picks.keys())
             )
             stock_candidates.extend(dynamic_stocks)
 
