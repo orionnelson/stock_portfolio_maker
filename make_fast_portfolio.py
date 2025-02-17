@@ -403,7 +403,7 @@ def build_portfolio(top_stocks, config):
     #initial_investment_per_stock = total_value / len(top_stocks)
 
     # Initialize the number of shares to buy for each stock
-    top_stocks['Num_Shares'] = (top_stocks["Investment"]  / (top_stocks[crncy_identifier] + flat_fee)).apply(lambda x: int(x))
+    top_stocks['Num_Shares'] = (top_stocks["Investment"]  / (top_stocks[crncy_identifier])).apply(lambda x: int(x))
 
     # Calculate the initial investment for each stock
     top_stocks['Investment'] = (top_stocks['Num_Shares'] * top_stocks[crncy_identifier]) + flat_fee
