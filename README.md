@@ -1,6 +1,7 @@
 # Stock Portfolio Builder
 
 This project is designed to help build a stock portfolio by selecting top-performing S&P 500 stocks based on various fundamental metrics, and distributing a given total investment value among the selected stocks.
+Currently Indexes (QQQ) etc arnt supported but will be in the future. 
 
 ## Features
 
@@ -22,6 +23,7 @@ This configeration plugged in by gemini expermental in the repos Experimental Mo
 - To Run `python make_fast_portfolio.py`
 - `Input Example`:  "Id like a portfolio consisting of 500000 swedish kronery that is 15% RYCEY 10% Microsoft 20% Google and 10 stocks total based on 3 month performance period and 5y history pe ratio threshold 15"
 - `Returns`: Excel File
+- `Manual`: Change the config file `config.json` and set `TEST_MODE=false`
 
 ```json
 {
