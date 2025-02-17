@@ -33,10 +33,11 @@ def generate_portfolio_config(port_request: str) -> dict:
     response = chat_session.send_message(f"""A user wants to build a portfolio with the following api however you must come up with the json config for the portfolio they want.
 
 
-    The user says '{port_request}' come up with the json schema for this portfolio based on below info and json example 
+    The user says '{port_request}' come up with the json schema for this portfolio based on below info and json example DO NOT PROVIDE EXPLANATION ONLY JSON, 
+    DO NOT DO CALCULATION ON NUMBER OF STOCKS GIVEN BY THE USER
 
     • total_value: Amount You Are Willing to Spend on your Portfolio total should be under this amount
-    • num_picks : Number of automated picks your portfolio will be divided among
+    • num_picks : Number of automated picks your portfolio will be divided among use amount user specifies
     • flat_fee : Flat price of a trade which charged by broker.
     • filter_pe_ratio: Option to filter by the PE threshold avoid overvalued overly speculative stocks
     • pe_ratio_threshold : Maximum PE Ratio Threshold limit.
