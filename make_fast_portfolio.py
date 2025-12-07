@@ -233,7 +233,9 @@ def get_exchange_rate(currency):
 
 
 
-def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks=0, excluded_tickers=None):
+
+def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks=0,excluded_tickers=None):
+
     """
     Dynamically select stocks for the remaining portfolio allocation.
     Includes:
