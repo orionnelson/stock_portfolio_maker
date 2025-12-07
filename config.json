@@ -4,7 +4,7 @@
     "flat_fee": 9.99,
     "filter_pe_ratio": true,
     "pe_ratio_threshold": 25,
-    "output_filename": "top_stocks_1y.xlsx", 
+    "output_filename": "top_stocks_1y_test_pick.xlsx", 
     "performance_period": "1y",
     "top_n_sectors": 4,
     "banned_sectors": ["Energy","Financials"], 
@@ -12,5 +12,7 @@
     "_comment": "Period '6m' is invalid, must be one of ['1d', '5d', '1mo', '3mo', '6mo', '1y', '2y', '5y', '10y', 'ytd', 'max'",
     "currency": "CAD",
     "cache": "lazy",
-    "picks":{"TSLA":20,"GOOG":30}  
+    "picks": {
+      "RYCEY":30
+    }
   } 

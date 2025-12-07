@@ -70,13 +70,52 @@ def categorize_by_sector(sp500_table):
         sector_dict[row['GICS Sector']].append(row['Symbol'])
     return sector_dict
 
-def get_sector_performance(sector_dict, period, mode="lazy"):
-    #print(sector_dict)
-    #print(period)
 
+def plot_sector_open_close(period, mode="lazy"):
+    """
+    Plots the raw Open and Close price data for each sector over time.
+
+    Args:
+        period (str): The period used in get_sector_performance (e.g., '6mo', '1y').
+        mode (str): 'lazy' to use cached data, otherwise re-fetch.
+    """
+    cache = load_cache()
+    sector_data_cache_key = f"sector_data_{period}"
+    if mode == "lazy" and sector_data_cache_key in cache:
+        sector_data_cache = cache[sector_data_cache_key]
+    else:
+        # Force re-fetch to populate sector data
+        tickers, sp500_table = get_sp500_tickers()
+        sector_dict = categorize_by_sector(sp500_table)
+        get_sector_performance(sector_dict, period, mode="force")  # populate cache
+        cache = load_cache()
+        sector_data_cache = cache.get(sector_data_cache_key)
+        if not sector_data_cache:
+            raise ValueError("Unable to fetch sector data for plotting.")
+
+    plt.figure(figsize=(14, 8))
+
+    for sector, df in sector_data_cache.items():
+        try:
+            sector_open = df.xs('Open', axis=1, level=1).mean(axis=1)
+            sector_close = df.xs('Close', axis=1, level=1).mean(axis=1)
+            plt.plot(sector_open.index, sector_open.values, linestyle='--', alpha=0.5, label=f"{sector} Open")
+            plt.plot(sector_close.index, sector_close.values, linewidth=2, label=f"{sector} Close")
+        except Exception as e:
+            print(f"Error plotting {sector}: {e}")
+            continue
+
+    plt.title(f"Sector Open vs Close Prices ({period})", fontsize=16)
+    plt.xlabel("Date", fontsize=12)
+    plt.ylabel("Price (Average across sector tickers)", fontsize=12)
+    plt.legend()
+    plt.grid(linestyle='--', alpha=0.6)
+    plt.tight_layout()
+    plt.show()
+
+def get_sector_performance(sector_dict, period, mode="lazy"):
     cache = load_cache()
     cache_key = f"sector_performance_{period}"
-    # If in lazy mode and cached sector data exists, return cached data
     if mode == "lazy" and cache_key in cache:
         print("Loading sector performance from cache.")
         return pd.Series(cache[cache_key], name="Performance")
@@ -88,25 +127,37 @@ def get_sector_performance(sector_dict, period, mode="lazy"):
         tickers_str = " ".join(tickers)
         try:
             sector_data = yf.download(tickers_str, period=period, group_by='ticker', auto_adjust=True)
-            if sector_data.empty:  # Handle empty downloads
+            if sector_data.empty:
                 print(f"No data for sector {sector}. Skipping.")
                 continue
+            
             sector_close = sector_data.xs('Close', axis=1, level=1)
-            if sector_close.empty:  # Handle missing 'Close' data
+            if sector_close.empty:
                 print(f"No 'Close' data for sector {sector}. Skipping.")
                 continue
-              # Cache sector data
+
+            # Normalize each ticker to start at 1
+            normalized = sector_close / sector_close.iloc[0]
+            # Take the mean of normalized prices across all tickers
+            sector_index = normalized.mean(axis=1)
+            # Sector performance = last value - 1
+            sector_performance[sector] = sector_index.iloc[-1] - 1
+
+            # Cache raw sector data
             sector_data_cache[sector] = sector_data
-            sector_performance[sector] = (sector_close.iloc[-1].sum() / sector_close.iloc[0].sum()) - 1
+
         except Exception as e:
             print(f"Error fetching sector performance for {sector}: {e}")
-            sector_performance[sector] = None  # Mark as failed
+            sector_performance[sector] = None
 
     cache[f"sector_data_{period}"] = sector_data_cache
     cache[cache_key] = sector_performance
     save_cache(cache)
 
-    return pd.Series(sector_performance, name="Performance")
+    sector_series = pd.Series(sector_performance, name="Performance")
+    sector_series = sector_series.apply(pd.to_numeric, errors="coerce").dropna()
+
+    return sector_series
 
 
 def analyze_fundamentals(stock_ticker,sector,mode='lazy'):
@@ -134,6 +185,9 @@ def analyze_fundamentals(stock_ticker,sector,mode='lazy'):
         profit_margins = info.get("profitMargins")
         share_price = info.get("currentPrice")
 
+        # Fetch data for Quick Ratio
+        quick_ratio = info.get("quickRatio")
+
 
         fundamentals = {
             "Ticker": stock_ticker,
@@ -147,6 +201,7 @@ def analyze_fundamentals(stock_ticker,sector,mode='lazy'):
             "EBITDA": info.get("ebitda"),
             "Profit_Margins": info.get("profitMargins"),
             "Share_Price": info.get("currentPrice"),
+            "Quick_Ratio": quick_ratio, 
         }
 
 
@@ -178,9 +233,13 @@ def get_exchange_rate(currency):
 
 
 
-def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks=0,excluded_tickers=None):
+def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks=0, excluded_tickers=None):
     """
-    Helper function to dynamically select stocks for the remaining percentage.
+    Dynamically select stocks for the remaining portfolio allocation.
+    Includes:
+    - Safe handling of empty or invalid sector performance data
+    - Filters for banned sectors
+    - Ranks stocks by fundamentals
     """
     print("Selecting dynamic picks to fill the gap.")
     sector_performance = get_sector_performance(
@@ -188,21 +247,35 @@ def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks
         config["performance_period"],
         mode=config.get("cache", "lazy")
     )
+
+    # Convert to numeric and drop invalid values
+    sector_performance = sector_performance.apply(pd.to_numeric, errors="coerce").dropna()
+
+    if sector_performance.empty:
+        raise ValueError("Sector performance data is empty or invalid — cannot select dynamic picks.")
+
     print("Sector Performance (YTD):\n", sector_performance)
 
-    banned_sectors = config.get("banned_sectors", [])
+    banned_sectors = set(config.get("banned_sectors", []))
     top_n_sectors = config.get("top_n_sectors", 3)
 
+    # Select top sectors excluding banned ones
     top_sectors = [
-        sector
-        for sector in sector_performance.nlargest(len(sector_performance)).index
+        sector for sector in sector_performance.nlargest(len(sector_performance)).index
         if sector not in banned_sectors
     ][:top_n_sectors]
+
+    if not top_sectors:
+        raise ValueError("No valid top sectors found after applying filters.")
+
     print("Top Sectors:", top_sectors)
+
+    # Initialize excluded tickers
+    excluded_tickers = set(excluded_tickers or [])
 
     stock_candidates = []
     for sector in top_sectors:
-        stocks = sector_dict[sector]
+        stocks = sector_dict.get(sector, [])
         print(f"Stocks in sector {sector}: {stocks}")
 
         for stock in stocks:
@@ -216,17 +289,27 @@ def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks
             if fundamentals:
                 stock_candidates.append(fundamentals)
 
-    # Create a DataFrame and select the top stocks
+    if not stock_candidates:
+        raise ValueError("No stock candidates found for selected sectors.")
+
+    # Create a DataFrame and clean it
     df = pd.DataFrame(stock_candidates)
     df = df.dropna()
 
-    # Filter and rank the stocks
+    # Filter for fundamentals
     df = df[
-        (df["EPS"] > 0) & (df["Revenue"] > 0) & (df["MarketCap"] > 0) & (df["PE_Ratio"] > 0)
+        (df["EPS"] > 0) &
+        (df["Revenue"] > 0) &
+        (df["MarketCap"] > 0) &
+        (df["PE_Ratio"] > 0)
     ]
-    if config["filter_pe_ratio"]:
+    if config.get("filter_pe_ratio", False):
         df = df[df["PE_Ratio"] < config["pe_ratio_threshold"]]
 
+    if df.empty:
+        raise ValueError("No valid stocks found after applying filters.")
+
+    # Score and rank
     df["Score"] = (
         df["EPS"].rank(ascending=False) +
         df["Revenue"].rank(ascending=False) +
@@ -234,16 +317,20 @@ def _get_dynamic_picks(config, sector_dict, remaining_percentage, existing_picks
     )
     df = df.sort_values(by="Score", ascending=True)
 
-    # Determine the number of additional picks required
-    num_additional_picks = config["num_picks"] - existing_picks
+    # Determine how many picks we need
+    num_additional_picks = max(config["num_picks"] - existing_picks, 0)
     dynamic_picks = df.head(num_additional_picks).to_dict(orient="records")
 
-    # Assign remaining percentage to each dynamic pick
+    if not dynamic_picks:
+        raise ValueError("No dynamic picks could be selected — check your filters or data sources.")
+
+    # Assign remaining percentage evenly
     remaining_percentage_per_stock = remaining_percentage / len(dynamic_picks)
     for pick in dynamic_picks:
         pick["Percentage"] = remaining_percentage_per_stock
 
     return dynamic_picks, sector_performance
+
 
 
 
@@ -350,14 +437,16 @@ def select_top_stocks(config, **kwargs):
     df["EPS_Rank"] = df["EPS"].rank(ascending=False)
     df["Revenue_Rank"] = df["Revenue"].rank(ascending=False)
     df["MarketCap_Rank"] = df["MarketCap"].rank(ascending=False)
+    df["Quick_Ratio_Rank"] = df["Quick_Ratio"].rank(ascending=False)  
 
     # Normalize the ranks
     df["EPS_Score"] = df["EPS_Rank"] / df["EPS_Rank"].max()
     df["Revenue_Score"] = df["Revenue_Rank"] / df["Revenue_Rank"].max()
     df["MarketCap_Score"] = df["MarketCap_Rank"] / df["MarketCap_Rank"].max()
+    df["Quick_Ratio_Score"] = df["Quick_Ratio_Rank"] / df["Quick_Ratio_Rank"].max()
 
     # Calculate the final score
-    df["Score"] = df["EPS_Score"] + df["Revenue_Score"] + df["MarketCap_Score"]
+    df["Score"] = df["EPS_Score"] + df["Revenue_Score"] + df["MarketCap_Score"] + df["Quick_Ratio_Score"]
 
     df = df.dropna(subset=["Score"])
     print("DataFrame after calculating Score:\n", df)
@@ -623,6 +712,10 @@ if __name__ == "__main__":
         top_stocks, sector_performance = select_top_stocks(config)
         print("Top Stocks:\n", top_stocks)
     
+    pp = config.get("performance_period", "unknown")
+    print(f"{pp} Sector Performance (YTD):\n")
+    plot_sector_open_close(config["performance_period"], mode=config.get("cache","lazy"))
+
     top_stocks = build_portfolio(top_stocks, config)
     print("Portfolio:\n", top_stocks)
     
