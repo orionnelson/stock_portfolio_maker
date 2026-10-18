@@ -1,0 +1,23 @@
+name: Portfolio regression tests
+on:
+  pull_request:
+    branches: [blue-master, main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  linux-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: requirements-tested.lock
+      - run: python -m pip install -r requirements-tested.lock
+      - run: python -m pip check
+      - run: python -m pytest -q
+      - run: python -m compileall -q portfolio_config.py portfolio_llm.py portfolio_budget.py portfolio_cli.py dags
+# No publishing, secrets, deployment or merge automation.
