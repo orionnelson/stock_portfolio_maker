@@ -6,12 +6,14 @@ from openpyxl import Workbook
 from openpyxl.utils.dataframe import dataframe_to_rows
 import json
 import time
-from prophet import Prophet
 import matplotlib.pyplot as plt
 from openpyxl.drawing.image import Image as OpenpyxlImage
 from io import BytesIO
 import os
-import win32com.client
+try:
+    import win32com.client
+except ImportError:  # Excel COM is optional and Windows-only.
+    win32com = None
 import pickle
 from datetime import datetime
 
@@ -47,12 +49,14 @@ def save_cache(cache):
 def load_config(file_path):
     with open(file_path, 'r') as file:
         config = json.load(file)
-    return config
+    from portfolio_config import validate_config
+    return validate_config(config)
 
 def get_sp500_tickers():
     url = 'https://en.wikipedia.org/wiki/List_of_S%26P_500_companies'
-    response = requests.get(url)
-    tables = pd.read_html(response.text)
+    response = requests.get(url, timeout=30)
+    response.raise_for_status()
+    tables = pd.read_html(__import__("io").StringIO(response.text))
     sp500_table = tables[0]
     non_class_c_shares = sp500_table[~sp500_table['Security'].str.contains('Class C', na=False)]
     # Preserve Voting rights
@@ -217,7 +221,7 @@ def get_exchange_rate(currency):
         currency = str(currency).upper()
         url = 'https://api.exchangerate-api.com/v4/latest/USD'
         try:
-            response = requests.get(url)
+            response = requests.get(url, timeout=30)
             response.raise_for_status()  # Raise HTTPError for bad responses
             data = response.json()
         except requests.RequestException as e:
@@ -467,6 +471,7 @@ def forecast_with_prophet(data, periods):
     df = data.reset_index()
     df.columns = ['ds', 'y']
     df['ds'] = df['ds'].dt.tz_localize(None)  # Remove timezone information
+    from prophet import Prophet
     model = Prophet()
     model.fit(df)
     future = model.make_future_dataframe(periods=periods)
@@ -492,27 +497,12 @@ def build_portfolio(top_stocks, config):
 
 
 
-    # Calculate the initial evenly distributed investment amount
-    #initial_investment_per_stock = total_value / len(top_stocks)
-
-    # Initialize the number of shares to buy for each stock
-    top_stocks['Num_Shares'] = (top_stocks["Investment"]  / (top_stocks[crncy_identifier])).apply(lambda x: int(x))
-
-    # Calculate the initial investment for each stock
-    top_stocks['Investment'] = (top_stocks['Num_Shares'] * top_stocks[crncy_identifier]) + flat_fee
-
-    # Calculate the remaining value to invest
-    total_invested = top_stocks['Investment'].sum()
-    remaining_value = total_value - total_invested
-
-    # Adjust for the remainder to distribute any leftover funds
-    while remaining_value >= top_stocks[crncy_identifier].min():
-        for index, row in top_stocks.iterrows():
-            additional_investment = row[crncy_identifier] 
-            if remaining_value >= additional_investment:
-                top_stocks.at[index, 'Num_Shares'] += 1
-                top_stocks.at[index, 'Investment'] += additional_investment
-                remaining_value -= additional_investment
+    from portfolio_budget import allocate_shares
+    counts, investments = allocate_shares(
+        top_stocks[crncy_identifier].tolist(), total_value, flat_fee,
+        top_stocks["Percentage"].tolist() if "Percentage" in top_stocks.columns else None)
+    top_stocks['Num_Shares'] = counts
+    top_stocks['Investment'] = investments
 
     return top_stocks
 
@@ -570,6 +560,8 @@ def fetch_stock_forecast(top_stocks, t_period, mode="lazy"):
 def save_forecast_to_excel_predict(top_stocks, sector_performance, filename,config):
         def close_excel_file_if_open(filepath):
             try:
+                if win32com is None:
+                    raise RuntimeError("File is locked; close the workbook and retry")
                 excel = win32com.client.Dispatch("Excel.Application")
                 for workbook in excel.Workbooks:
                     if workbook.FullName == os.path.abspath(filepath):
@@ -691,37 +683,5 @@ def generate_forecast_image(ticker, historical, prophet_forecasts):
     return img_stream
 
 if __name__ == "__main__":
-    TEST_MODE = True
-    config = load_config('config.json')
-    if TEST_MODE:
-        from cgemini1206exp import generate_portfolio_config
-        port_request = input("What portfolio would you like?: ")
-        print(f"Requested Portfolio with : { port_request}")
-        config = generate_portfolio_config(port_request)
-    stock_picks = config.get("picks",None)
-    if not stock_picks or not isinstance(stock_picks, (dict, list)):
-        top_stocks, sector_performance = select_top_stocks(config)
-        print("Top Stocks:\n", top_stocks)
-    elif isinstance(stock_picks, dict):
-        top_stocks, sector_performance = select_top_stocks(config, stock_picks=stock_picks)
-    elif isinstance(stock_picks, list):
-        print("Using provided stock list.")
-        stock_picks = stock_picks[:config.get("num_picks", len(stock_picks))]
-        equal_percentage = 100 / len(stock_picks)
-        stock_picks = {ticker: equal_percentage for ticker in stock_picks}
-        top_stocks, sector_performance = select_top_stocks(config, stock_picks=stock_picks)
-    else:
-        top_stocks, sector_performance = select_top_stocks(config)
-        print("Top Stocks:\n", top_stocks)
-    
-    pp = config.get("performance_period", "unknown")
-    print(f"{pp} Sector Performance (YTD):\n")
-    plot_sector_open_close(config["performance_period"], mode=config.get("cache","lazy"))
-
-    top_stocks = build_portfolio(top_stocks, config)
-    print("Portfolio:\n", top_stocks)
-    
-    
-    output_file =  config.get("output_filename","portfolio.xlsx")
-    save_forecast_to_excel_predict(top_stocks, sector_performance, output_file,config)
-    print(f"Data saved to '{output_file}'")
+    from portfolio_cli import main
+    main()

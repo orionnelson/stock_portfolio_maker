@@ -1,0 +1,10 @@
+.env
+!.env.example
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.xlsx
+*.summary.json
+stock_data_cache_*.pkl
+.airflow/
